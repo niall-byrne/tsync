@@ -1,0 +1,66 @@
+#!/bin/bash
+
+# $1 - The folder to watch
+REMOTE="192.168.99.1"
+TARGET=""
+
+error() {
+  echo "Usage: tsync (setup | watch) (folder name to watch or synchronize)"
+  exit 127
+}
+
+getFolder() {
+  [[ -z ${2} ]] && error
+  TARGET="$(echo "${2}" | tr -s /)"
+  TARGET=${TARGET%/}
+}
+
+jest() {
+  ssh -n "$(whoami)"@"${REMOTE}" "cd ${1}; npm test"
+}
+
+
+setup() {
+  echo -e "Clone ${1} =>\nTo: $(whoami)@${REMOTE}:${1}"
+  ssh -n "$(whoami)"@"${REMOTE}" "mkdir -p ${1}"
+  rsync -a --exclude "node_modules" "${1}/" "$(whoami)"@"${REMOTE}":"${1}"
+  echo "Installing node_modules ...."
+  ssh -n "$(whoami)"@"${REMOTE}" "cd ${1}; npm ci"
+  echo "Ready!"
+}
+
+watch() {
+  echo -e "Synchronizing ${1} =>\nTo: $(whoami)@${REMOTE}:${1}"
+  /usr/local/bin/fswatch "${1}" | while read -r FILE
+  do
+    if [[ -f ${FILE} ]]; then
+      if [[ "${FILE}" != "${1}/node_modules/"* ]]; then
+        echo "Event: Copy $FILE => $(whoami)@${REMOTE}:${1}"
+        rsync -p "${FILE}" "$(whoami)"@"${REMOTE}":"${1}"
+        if [[ "${FILE}" == *"package.json" ]]; then
+          echo -n "Event: 'package.json' file has changed, reinstalling ... "
+          ssh -n "$(whoami)"@"${REMOTE}" "cd ${1}; npm install > /dev/null 2>&1"
+          echo "done!"
+        fi
+      fi
+    fi
+  done
+}
+
+case $1 in
+  "jest")
+    getFolder "$@"
+    jest "${TARGET}"
+    ;;
+  "setup")
+    getFolder "$@"
+    setup "$TARGET"
+    ;;
+  "watch")
+    getFolder "$@"
+    watch "$TARGET"
+    ;;
+  *)
+    error
+    ;;
+esac
